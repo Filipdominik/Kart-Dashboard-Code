@@ -1,25 +1,107 @@
-import busio, time, digitalio, sdcardio, board
+#System libs:
+import time, digitalio, random
+import busio, board 
+import countio, asyncio
+
+#Modules/Screen libs:
+import sdcardio
 from adafruit_rgb_display import color565
 from adafruit_rgb_display.ili9341 import ILI9341
 import roboticsmasters_mpu9250
 import adafruit_ds3231, adafruit_gps
 
-SDCardPin = board.GP14
-SD_DetectPin = board.GP15
-LCD_CS = board.GP9
-TP_CS = board.GP10
-LCD_RS = board.GP11
-LCD_RESET = board.GP12
+#SD-slot:
+SD_Select = board.GP9
+SD_DetectPin = board.GP10
 
-#Define SPI for SD Card and Screen, Define I2C for accel and RTC. And define UART for GPS module
-SPIBus = busio.SPI(board.GP6,board.GP7,board.GP8)
-I2CBus = busio.I2C(board.GP2,board.GP3)
-UARTBus = busio.UART(board.GP0,board.GP1,baudrate=9600,timeout=30)
+#HC-12 UART verbinding
+HC_12_TX = board.GP12
+HC_12_RX = board.GP13
+
+#NEO-6M (GPS) UART (Markering op PCB van het moederbord is de markering van de pi pico, niet de GPS):
+#Dus: RX (GPS) -> TX (PICO GP0)
+#TX (GPS) -> RX (PICO GP1)
+GPS_UART_RX = board.GP0 
+GPS_UART_TX = board.GP1
+
+#LCD Zooi:
+LCD_CS = board.GP14
+TP_CS = board.GP15
+LCD_RS = board.GP11
+LCD_RESET = board.GP18
+
+
+#-----------------------------------------------------------------------------
+#Dit gedeelde is voor het optische draaisensor, als je deze ooit gaat gebruiken om de snelheid te meten:
+#OPTIC_SENSOR_ANALOG = board.GP16
+#OPTIC_SENSOR_DIGITAL = board.GP17
+
+#async def catch_interrupt(pin):
+#    """Print a message when pin goes low."""
+#    with countio.Counter(pin) as interrupt:
+#        while True:
+#            if interrupt.count > 0:
+#                interrupt.count = 0
+#                #Put here: Script that counts the delta time between two pulses, and calculates the speed of a wheel based on a rotation ratio. 
+#                # Onthoud: Je moet nog een onderdeel ontwerpen op de kart om de optische sensor te monteren, en zodat die werkt. 
+#                # Ik dacht zelf om hier een LM393 te gebruiken. En dan een cirkel erdoorheen te laten draaien.
+#                # Als je aan dit project bent begonnen, en dit bestand open hebt. Heb ik er wel vertrouwen in dat jij hier iets uit kan maken.
+#                # Succes ermee en veel rijplezier! 
+#            await asyncio.sleep(0)
+
+#Gooi deze in je main code:
+#async def main():
+#    interrupt_task = asyncio.create_task(catch_interrupt(board.D3))
+#    await asyncio.gather(interrupt_task)
+#
+#asyncio.run(main())
+#-----------------------------------------------------------------------------
+
+#Verklaar de verschillende busses voor de onderdelen.
+SPIBus = busio.SPI(board.GP6,board.GP7,board.GP8) #SPI Bus is voornamelijk voor het 3.5" TFT SPI LCD scherm van elegoo, maar ook voor de micro-SD-Kaart reader van SparkFun. 
+I2CBus = busio.I2C(board.GP2,board.GP3) #I2C voor 9-DOF sensor (MPU-9250 van SparkFun) en RTC: DS3231
+GPS_UART = busio.UART(GPS_UART_TX,GPS_UART_RX,baudrate=9600) #Omdat UART geen meerdere slaven support, moet je twee keer een bus definen. Deze is voor GPS (NEO-6M)
+
+#HC 12 verklaring--------------------------------------------------------------
+HC12_UART = busio.UART(HC_12_TX, HC_12_RX,baudrate=4800) #HC12 Uart, ik raad 4800bps aan. dat heeft een range van ongeveer 500 meter in perfecte omstandigheden, de maximale afstand op CP berghem is 250m van de tenten af.
+#De tijd om ~70 bytes door te sturen is dan 0.047s, snel genoeg dus
+#Het format voor de HC-12 communicatie:
+#Time,Heading,Xa,Ya,Za,Ox,Oy,Oz,LATITUDE,LONGITUDE,Satellite amount,DeltaPosition,Altitude,Speed (ongeveer 70 bytes.)
+#The time is provided like this: 123523 which is 12 hours 35 minutes and 23 seconds
+#Heading (provided in degrees with 1 degree precision e.g.: 123)
+#Xa, Ya, Za, Ox, Oy, Oz. Are all a float which is a value of less than 100.0 (4 digits)
+#Lattitude or longitude: example: 00831.54761
+#Satellite amount: 1 or 2 digit number. Less than or equal to 99
+#DeltaPosition: float, less than 50.0
+#Altitude: float, less than 100.0
+#Speed: float, less than 100.0
+#--------------------------------------------------------------HC 12 verklaring
+
 
 #Define the different modules used in this setup
-SDCard = sdcardio.SDCard(SPIBus,SDCardPin)
+SDCard = sdcardio.SDCard(SPIBus,SD_Select)
 AccelMeter = roboticsmasters_mpu9250.MPU9250(i2c_bus=I2CBus)
 RTCModule = adafruit_ds3231.DS3231(I2CBus)
-GPSModule = adafruit_gps.GPS(UARTBus,debug=False)
-Display = ILI9341
+GPSModule = adafruit_gps.GPS(GPS_UART,debug=False)
+display = ILI9341(SPIBus,cs=LCD_CS,dc=LCD_RS,rst=LCD_RESET,width=480,height=320)
 
+RED = (255,0,0)
+BLUE = (0,255,0)
+GREEN = (0,0,255)
+
+while True:
+    # Fill the screen red, green, blue, then black:
+    for color in ((255, 0, 0), (0, 255, 0), (0, 0, 255)):
+        display.fill(color565(color))
+    # Clear the display
+    display.fill(0)
+    # Draw a red pixel in the center.
+    display.pixel(display.width // 2, display.height // 2, color565(255, 0, 0))
+    # Pause 2 seconds.
+    time.sleep(2)
+    # Clear the screen a random color
+    display.fill(
+        color565(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+    )
+    # Pause 2 seconds.
+    time.sleep(2)
