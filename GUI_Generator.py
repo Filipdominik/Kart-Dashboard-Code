@@ -5,5 +5,7 @@ from PIL import Image, ImageDraw
 #de output van de function moet een bitmap zijn (een 3D numpy array.) (X image, Y image, (R,G,B))
 #De inputs zijn: 
 
+X,Y = 480,320
 def GenerateUI(speed:float,measurement:int,measuretime:str,satteliteinfo:str,CCstate:bool,CCspeed:float): 
-    print('hier code')
+    image = Image.new("RGB", (X,Y))
+    draw = ImageDraw.Draw(image)
