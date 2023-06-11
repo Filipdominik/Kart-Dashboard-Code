@@ -1,0 +1,3 @@
+#ignore all files and folders with a dot:
+.*
+!/.gitignore
