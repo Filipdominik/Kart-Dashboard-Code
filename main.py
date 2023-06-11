@@ -221,10 +221,27 @@ def Core2(RecordID, CruiseControl, CCSpeed=0):
     time.sleep(1)
     ThreadActive = False
 
+
 while True:
     if not ThreadActive:
         SecondThread = _thread.start_new_thread(Core2,(RecordID,CC))
+
+    if HC12_UART.in_waiting > 0:
+        command = HC12_UART.readline()
+        if command == 'Start':
+            if not Recording:
+                Pause_Start_Interrupt()
+                HC12_UART.write("Start -> Enabled Recording\n".encode())
+            else:
+                HC12_UART.write("Start -> Already Enabled!\n".encode())
         
+        if command == 'Stop':
+            if Recording:
+                Pause_Start_Interrupt()
+                HC12_UART.write("Stop -> Disabled Recording\n".encode())
+            else:
+                HC12_UART.write("Stop -> Already Disabled!\n".encode())    
+
     if Recording:
         currentTime = RTCModule.datetime
         currentEpoch = time.mktime(currentTime)
