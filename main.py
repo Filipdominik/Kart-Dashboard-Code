@@ -1,7 +1,7 @@
 #System libs:
-import time, digitalio,pwmio, random, datetime
+import time, digitalio, random
 import busio, board 
-import countio, asyncio
+import math
 
 #voor multithreading (het gebruiken van de tweede core op de RPI Pico)
 import _thread
@@ -15,9 +15,6 @@ from adafruit_rgb_display.ili9341 import ILI9341
 import roboticsmasters_mpu9250
 import adafruit_ds3231, adafruit_gps
 
-#for speed calculation:
-import math
-
 #custom lib to generate image for display:
 import GUI_Generator
 
@@ -27,7 +24,8 @@ CruiseControlButton_pin = board.GP27
 CruiseControlOUT_pin = board.GP26_A0
 
 #SD-slot:
-SD_Select = board.GP9
+SD_Select_PIN = board.GP9
+SD_Select = digitalio.DigitalInOut(SD_Select_PIN).switch_to_output()
 SD_DetectPin = board.GP10
 
 #HC-12 UART verbinding
@@ -41,14 +39,19 @@ GPS_UART_RX = board.GP0
 GPS_UART_TX = board.GP1
 
 #LCD Zooi:
-LCD_CS = board.GP14
-TP_CS = board.GP15
-LCD_RS = board.GP11
-LCD_RESET = board.GP18
+LCD_CS_PIN = board.GP14
+LCD_CS = digitalio.DigitalInOut(LCD_CS_PIN).switch_to_output()
+
+TP_CS_PIN = board.GP15
+TP_CS = digitalio.DigitalInOut(TP_CS_PIN).switch_to_output().value = False
+
+LCD_RS_PIN = board.GP11
+LCD_RESET_PIN = board.GP18
 
 
 #-----------------------------------------------------------------------------
 #Dit gedeelde is voor het optische draaisensor, als je deze ooit gaat gebruiken om de snelheid te meten:
+#import countio, asyncio
 #OPTIC_SENSOR_ANALOG = board.GP16
 #OPTIC_SENSOR_DIGITAL = board.GP17
 
@@ -95,21 +98,24 @@ HC12_UART = busio.UART(HC_12_TX, HC_12_RX,baudrate=4800)
 
 
 #Define the different modules used in this setup
-SDCard = sdcardio.SDCard(SPIBus,SD_Select)
-vfs = storage.VfsFat(SDCard)
-storage.mount(vfs,'/sd')
+SDCardDetect = digitalio.DigitalInOut(SD_DetectPin).switch_to_input()
+if SDCardDetect.value:
+    SDCard = sdcardio.SDCard(SPIBus,SD_Select_PIN)
+    vfs = storage.VfsFat(SDCard)
+    storage.mount(vfs,'/sd')
 
 AccelMeter = roboticsmasters_mpu9250.MPU9250(i2c_bus=I2CBus)
 RTCModule = adafruit_ds3231.DS3231(I2CBus)
 GPSModule = adafruit_gps.GPS(GPS_UART,debug=False)
 
-display = ILI9341(SPIBus,cs=LCD_CS,dc=LCD_RS,rst=LCD_RESET,width=480,height=320)
-
-RED = (255,0,0)
-BLUE = (0,255,0)
-GREEN = (0,0,255)
+display = ILI9341(SPIBus,cs=LCD_CS_PIN,dc=LCD_RS_PIN,rst=LCD_RESET_PIN,width=480,height=320)
+Display_Paused = False
+display.reset()
 
 def ScreenTest():
+    RED = (255,0,0)
+    BLUE = (0,255,0)
+    GREEN = (0,0,255)
     # Fill the screen red, green, blue, then black:
     for color in ((255, 0, 0), (0, 255, 0), (0, 0, 255)):
         display.fill(color565(color))
@@ -126,13 +132,9 @@ def ScreenTest():
     # Pause 2 seconds.
     time.sleep(2)
 
-
 def WriteData(RecordID):
-    
     data_dict = GetData()
     OutputString = f"{data_dict['TimeStr']}/{data_dict['Heading']}/{data_dict['Ax']}/{data_dict['Ay']}/{data_dict['Az']}/{data_dict['Mx']}/{data_dict['My']}/{data_dict['Mz']}/{data_dict['Lati']}/{data_dict['Long']}/{data_dict['SatCount']}/{data_dict['Speed']}\n"
-    with open(f'/sd/{RecordID}','a') as f:
-        f.write(OutputString)
     HC12_UART.write(OutputString.encrypt())
 
 def GetData():
@@ -165,7 +167,6 @@ def GetData():
     
     return data_dict
 
-
 NextPing = 0
 DeltaPing = 0
 Recording = False
@@ -173,7 +174,6 @@ RecordID = 0
 CC = False
 CCSpeed = 0
 ThreadActive = False
-
 
 def Pause_Start_Interrupt():
     global Recording, RecordID
@@ -210,6 +210,30 @@ def CruiseControlInterrupt():
 CruiseControlButton = digitalio.DigitalInOut(CruiseControlButton_pin).switch_to_input(pull=digitalio.Pull.UP)
 CruiseControlOUT = digitalio.DigitalInOut(CruiseControlOUT_pin).switch_to_output()
 
+def WriteToSD(fp:str,data):
+    if not SDCardDetect.value:
+        return False
+    
+    global Display_Paused
+    Display_Paused = True
+    LCD_CS.value = False
+    SD_Select.value = True
+
+    if not storage.getmount('/sd'):
+        if SDCardDetect.value:
+            SDCard = sdcardio.SDCard(SPIBus,SD_Select_PIN)
+            vfs = storage.VfsFat(SDCard)
+            storage.mount(vfs,'/sd')
+    
+    data_dict = GetData()
+    OutputString = f"{data_dict['TimeStr']}/{data_dict['Heading']}/{data_dict['Ax']}/{data_dict['Ay']}/{data_dict['Az']}/{data_dict['Mx']}/{data_dict['My']}/{data_dict['Mz']}/{data_dict['Lati']}/{data_dict['Long']}/{data_dict['SatCount']}/{data_dict['Speed']}\n"
+    with open(f'/sd/{RecordID}.txt','a') as f:
+        f.write(OutputString)
+    
+    LCD_CS.value = True
+    SD_Select.value = False
+    Display_Paused = False
+
 def Core2(RecordID, CruiseControl, CCSpeed=0):
     global ThreadActive
     ThreadActive = True
@@ -221,9 +245,8 @@ def Core2(RecordID, CruiseControl, CCSpeed=0):
     time.sleep(1)
     ThreadActive = False
 
-
 while True:
-    if not ThreadActive:
+    if not ThreadActive and not Display_Paused:
         SecondThread = _thread.start_new_thread(Core2,(RecordID,CC))
 
     if HC12_UART.in_waiting > 0:
